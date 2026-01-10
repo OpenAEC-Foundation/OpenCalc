@@ -1,0 +1,409 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <title>IFC Viewer Test</title>
+    <style>
+        body {
+            margin: 0;
+            padding: 20px;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1e293b;
+            color: #fff;
+        }
+        #log {
+            background: #000;
+            color: #0f0;
+            padding: 15px;
+            font-family: monospace;
+            font-size: 12px;
+            height: 200px;
+            overflow-y: auto;
+            margin-bottom: 20px;
+            border-radius: 8px;
+        }
+        .error { color: #f00; }
+        .warn { color: #ff0; }
+        .success { color: #0f0; }
+        #viewer {
+            width: 100%;
+            height: 500px;
+            background: #0f172a;
+            border-radius: 8px;
+        }
+        button {
+            padding: 10px 20px;
+            margin: 5px;
+            border: none;
+            border-radius: 6px;
+            background: #3b82f6;
+            color: white;
+            cursor: pointer;
+            font-size: 14px;
+        }
+        button:hover { background: #2563eb; }
+        h1 { color: #3b82f6; }
+    </style>
+</head>
+<body>
+    <h1>IFC 3D Viewer Debug Test</h1>
+
+    <div id="log"></div>
+
+    <div>
+        <button onclick="initViewer()">1. Init Viewer</button>
+        <button onclick="loadTestHouse()">2. Load Test House</button>
+        <input type="file" id="fileInput" accept=".ifc" style="margin-left: 20px;">
+    </div>
+
+    <div id="viewer"></div>
+
+    <script type="importmap">
+    {
+        "imports": {
+            "three": "https://unpkg.com/three@0.160.0/build/three.module.js",
+            "three/addons/": "https://unpkg.com/three@0.160.0/examples/jsm/"
+        }
+    }
+    </script>
+
+    <script type="module">
+        import * as THREE from 'three';
+        import { OrbitControls } from 'three/addons/controls/OrbitControls.js';
+
+        // Maak globaal beschikbaar
+        window.THREE = THREE;
+        window.OrbitControls = OrbitControls;
+
+        function log(msg, type = 'info') {
+            const logEl = document.getElementById('log');
+            const className = type === 'error' ? 'error' : type === 'warn' ? 'warn' : type === 'success' ? 'success' : '';
+            logEl.innerHTML += `<div class="${className}">[${new Date().toLocaleTimeString()}] ${msg}</div>`;
+            logEl.scrollTop = logEl.scrollHeight;
+            console.log(msg);
+        }
+        window.log = log;
+
+        log('Three.js module geladen', 'success');
+        log('OrbitControls geladen', 'success');
+
+        // Load web-ifc
+        log('Loading web-ifc...');
+
+        let WebIFC = null;
+        try {
+            const module = await import('https://unpkg.com/web-ifc@0.0.54/web-ifc-api.js');
+            WebIFC = module;
+            window.WebIFC = WebIFC;
+            log('web-ifc module geladen', 'success');
+        } catch (e) {
+            log('web-ifc module load error: ' + e.message, 'error');
+            // Probeer alternatieve methode
+            log('Trying alternative web-ifc loading...', 'warn');
+        }
+
+        let scene, camera, renderer, controls;
+        let ifcApi = null;
+        let model = null;
+
+        window.initViewer = async function() {
+            log('=== Initializing Viewer ===');
+
+            const container = document.getElementById('viewer');
+
+            try {
+                // Scene
+                scene = new THREE.Scene();
+                scene.background = new THREE.Color(0x1e293b);
+                log('Scene created', 'success');
+
+                // Camera
+                camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+                camera.position.set(20, 20, 20);
+                log('Camera created', 'success');
+
+                // Renderer
+                renderer = new THREE.WebGLRenderer({ antialias: true });
+                renderer.setSize(container.clientWidth, container.clientHeight);
+                renderer.setPixelRatio(window.devicePixelRatio);
+                container.innerHTML = '';
+                container.appendChild(renderer.domElement);
+                log('Renderer created', 'success');
+
+                // Controls
+                controls = new OrbitControls(camera, renderer.domElement);
+                controls.enableDamping = true;
+                controls.dampingFactor = 0.05;
+                log('Controls created', 'success');
+
+                // Lights
+                const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+                scene.add(ambientLight);
+                const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+                directionalLight.position.set(50, 50, 25);
+                scene.add(directionalLight);
+                const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+                fillLight.position.set(-25, 25, -25);
+                scene.add(fillLight);
+                log('Lights added', 'success');
+
+                // Grid
+                const gridHelper = new THREE.GridHelper(100, 100, 0x475569, 0x334155);
+                scene.add(gridHelper);
+                log('Grid added', 'success');
+
+                // Test cube
+                const geometry = new THREE.BoxGeometry(5, 5, 5);
+                const material = new THREE.MeshPhongMaterial({ color: 0x3b82f6 });
+                const cube = new THREE.Mesh(geometry, material);
+                cube.position.y = 2.5;
+                scene.add(cube);
+                log('Test cube added - you should see a blue cube', 'success');
+
+                // Start render loop
+                function animate() {
+                    requestAnimationFrame(animate);
+                    controls.update();
+                    renderer.render(scene, camera);
+                }
+                animate();
+                log('Render loop started', 'success');
+
+                // Init web-ifc
+                log('Initializing web-ifc API...');
+
+                if (WebIFC && WebIFC.IfcAPI) {
+                    ifcApi = new WebIFC.IfcAPI();
+                    ifcApi.SetWasmPath('https://unpkg.com/web-ifc@0.0.54/');
+                    await ifcApi.Init();
+                    log('web-ifc API initialized!', 'success');
+                    window.ifcApi = ifcApi;
+                } else {
+                    log('web-ifc not available - trying dynamic load...', 'warn');
+                    // Probeer dynamisch te laden
+                    const script = document.createElement('script');
+                    script.src = 'https://unpkg.com/web-ifc@0.0.54/web-ifc-api-iife.js';
+                    script.onload = async () => {
+                        log('web-ifc IIFE loaded', 'success');
+                        if (window.WebIFC) {
+                            ifcApi = new window.WebIFC.IfcAPI();
+                            ifcApi.SetWasmPath('https://unpkg.com/web-ifc@0.0.54/');
+                            await ifcApi.Init();
+                            log('web-ifc API initialized (IIFE)!', 'success');
+                            window.ifcApi = ifcApi;
+                        }
+                    };
+                    script.onerror = () => log('web-ifc IIFE failed to load', 'error');
+                    document.head.appendChild(script);
+                }
+
+                // Maak variabelen globaal
+                window.scene = scene;
+                window.camera = camera;
+                window.controls = controls;
+
+            } catch (error) {
+                log('ERROR: ' + error.message, 'error');
+                console.error(error);
+            }
+        };
+
+        window.loadTestHouse = function() {
+            log('=== Creating Test House ===');
+
+            if (!window.scene) {
+                log('Scene not initialized! Click "Init Viewer" first.', 'error');
+                return;
+            }
+
+            // Verwijder bestaand model
+            if (model) {
+                window.scene.remove(model);
+            }
+
+            // Maak een simpel huis
+            model = new THREE.Group();
+
+            // Vloer
+            const floorGeom = new THREE.BoxGeometry(10, 0.3, 10);
+            const floorMat = new THREE.MeshPhongMaterial({ color: 0x808080 });
+            const floor = new THREE.Mesh(floorGeom, floorMat);
+            floor.position.y = 0.15;
+            model.add(floor);
+
+            // Muren
+            const wallMat = new THREE.MeshPhongMaterial({ color: 0xffffff, side: THREE.DoubleSide });
+
+            const wall1 = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 0.2), wallMat);
+            wall1.position.set(0, 1.8, -5);
+            model.add(wall1);
+
+            const wall2 = new THREE.Mesh(new THREE.BoxGeometry(10, 3, 0.2), wallMat);
+            wall2.position.set(0, 1.8, 5);
+            model.add(wall2);
+
+            const wall3 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3, 10), wallMat);
+            wall3.position.set(-5, 1.8, 0);
+            model.add(wall3);
+
+            const wall4 = new THREE.Mesh(new THREE.BoxGeometry(0.2, 3, 10), wallMat);
+            wall4.position.set(5, 1.8, 0);
+            model.add(wall4);
+
+            // Dak
+            const roofGeom = new THREE.ConeGeometry(7.5, 2, 4);
+            const roofMat = new THREE.MeshPhongMaterial({ color: 0xb45309 });
+            const roof = new THREE.Mesh(roofGeom, roofMat);
+            roof.position.y = 4.3;
+            roof.rotation.y = Math.PI / 4;
+            model.add(roof);
+
+            window.scene.add(model);
+            window.model = model;
+            log('Test house model added!', 'success');
+        };
+
+        async function loadIFCBuffer(buffer, filename) {
+            log('=== Loading IFC: ' + filename + ' ===');
+            log('Buffer size: ' + buffer.length + ' bytes');
+
+            if (!window.ifcApi) {
+                log('web-ifc not initialized! Click "Init Viewer" first and wait for initialization.', 'error');
+                return;
+            }
+
+            try {
+                // Verwijder bestaand model
+                if (window.model) {
+                    window.scene.remove(window.model);
+                    window.model = null;
+                }
+
+                log('Opening IFC model...');
+                const modelID = window.ifcApi.OpenModel(buffer);
+                log('Model opened with ID: ' + modelID, 'success');
+
+                log('Streaming meshes...');
+                const geometries = [];
+                let meshCount = 0;
+                let vertexCount = 0;
+
+                window.ifcApi.StreamAllMeshes(modelID, (mesh) => {
+                    const placedGeometries = mesh.geometries;
+
+                    for (let i = 0; i < placedGeometries.size(); i++) {
+                        const placedGeometry = placedGeometries.get(i);
+                        const geometry = window.ifcApi.GetGeometry(modelID, placedGeometry.geometryExpressID);
+
+                        const verts = window.ifcApi.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
+                        const indices = window.ifcApi.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize());
+
+                        if (verts.length > 0 && indices.length > 0) {
+                            const threeGeometry = new THREE.BufferGeometry();
+
+                            const positions = new Float32Array(verts.length / 2);
+                            const normals = new Float32Array(verts.length / 2);
+
+                            for (let j = 0; j < verts.length; j += 6) {
+                                const idx = j / 2;
+                                positions[idx] = verts[j];
+                                positions[idx + 1] = verts[j + 1];
+                                positions[idx + 2] = verts[j + 2];
+                                normals[idx] = verts[j + 3];
+                                normals[idx + 1] = verts[j + 4];
+                                normals[idx + 2] = verts[j + 5];
+                            }
+
+                            threeGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                            threeGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                            threeGeometry.setIndex(Array.from(indices));
+
+                            const color = new THREE.Color(
+                                placedGeometry.color.x,
+                                placedGeometry.color.y,
+                                placedGeometry.color.z
+                            );
+
+                            const material = new THREE.MeshPhongMaterial({
+                                color: color,
+                                side: THREE.DoubleSide,
+                                transparent: placedGeometry.color.w < 1,
+                                opacity: placedGeometry.color.w
+                            });
+
+                            const threeMesh = new THREE.Mesh(threeGeometry, material);
+
+                            const matrix = new THREE.Matrix4();
+                            matrix.fromArray(placedGeometry.flatTransformation);
+                            threeMesh.applyMatrix4(matrix);
+
+                            geometries.push(threeMesh);
+                            meshCount++;
+                            vertexCount += positions.length / 3;
+                        }
+
+                        geometry.delete();
+                    }
+                });
+
+                log('Meshes extracted: ' + meshCount, 'success');
+                log('Total vertices: ' + vertexCount);
+
+                window.ifcApi.CloseModel(modelID);
+
+                // Maak group
+                window.model = new THREE.Group();
+                geometries.forEach(mesh => window.model.add(mesh));
+
+                // Centreer
+                const box = new THREE.Box3().setFromObject(window.model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                log('Model size: ' + size.x.toFixed(2) + ' x ' + size.y.toFixed(2) + ' x ' + size.z.toFixed(2));
+
+                window.model.position.sub(center);
+                window.scene.add(window.model);
+
+                // Camera aanpassen
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const dist = maxDim * 1.5;
+                window.camera.position.set(dist, dist, dist);
+                window.controls.target.set(0, 0, 0);
+                window.controls.update();
+
+                log('IFC Model loaded successfully!', 'success');
+
+            } catch (error) {
+                log('ERROR loading IFC: ' + error.message, 'error');
+                console.error(error);
+            }
+        }
+        window.loadIFCBuffer = loadIFCBuffer;
+
+        // File input handler
+        document.getElementById('fileInput').addEventListener('change', async (event) => {
+            const file = event.target.files[0];
+            if (file) {
+                log('Loading file: ' + file.name);
+                const reader = new FileReader();
+                reader.onload = async (e) => {
+                    const buffer = new Uint8Array(e.target.result);
+                    await loadIFCBuffer(buffer, file.name);
+                };
+                reader.readAsArrayBuffer(file);
+            }
+        });
+
+        // Auto-init after short delay
+        setTimeout(() => {
+            log('Page ready. Click "Init Viewer" to start.');
+        }, 100);
+
+        // Handle errors
+        window.onerror = function(msg, url, line) {
+            log('Window Error: ' + msg + ' at line ' + line, 'error');
+        };
+    </script>
+</body>
+</html>

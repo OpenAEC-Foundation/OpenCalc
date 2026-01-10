@@ -1,0 +1,632 @@
+<!DOCTYPE html>
+<html lang="nl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OpenCalc IFC Viewer</title>
+    <script src="https://unpkg.com/three@0.160.0/build/three.min.js"></script>
+    <script src="https://unpkg.com/three@0.160.0/examples/js/controls/OrbitControls.js"></script>
+    <script src="https://unpkg.com/web-ifc@0.0.54/web-ifc-api-iife.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        html, body {
+            width: 100%;
+            height: 100%;
+            overflow: hidden;
+            font-family: 'Segoe UI', Arial, sans-serif;
+            background: #1e293b;
+        }
+
+        #container {
+            width: 100%;
+            height: 100%;
+            position: relative;
+        }
+
+        #viewer {
+            width: 100%;
+            height: 100%;
+        }
+
+        #loading {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #fff;
+            z-index: 100;
+        }
+
+        #loading.hidden {
+            display: none;
+        }
+
+        .spinner {
+            width: 50px;
+            height: 50px;
+            border: 4px solid rgba(255, 255, 255, 0.3);
+            border-top-color: #0ea5e9;
+            border-radius: 50%;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 20px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        #toolbar {
+            position: absolute;
+            top: 10px;
+            left: 10px;
+            display: flex;
+            gap: 5px;
+            z-index: 50;
+        }
+
+        .tool-btn {
+            padding: 8px 12px;
+            border: none;
+            border-radius: 6px;
+            background: rgba(255, 255, 255, 0.95);
+            cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.2s;
+            box-shadow: 0 2px 8px rgba(0,0,0,0.15);
+        }
+
+        .tool-btn:hover {
+            background: #fff;
+            transform: translateY(-1px);
+            box-shadow: 0 4px 12px rgba(0,0,0,0.2);
+        }
+
+        .tool-btn.active {
+            background: #0ea5e9;
+            color: white;
+        }
+
+        #info-panel {
+            position: absolute;
+            bottom: 10px;
+            left: 10px;
+            background: rgba(255, 255, 255, 0.98);
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-size: 12px;
+            max-width: 280px;
+            box-shadow: 0 4px 16px rgba(0,0,0,0.15);
+            z-index: 50;
+        }
+
+        #info-panel.hidden {
+            display: none;
+        }
+
+        #info-panel h4 {
+            margin-bottom: 8px;
+            color: #0ea5e9;
+            font-size: 13px;
+        }
+
+        #info-panel table {
+            width: 100%;
+        }
+
+        #info-panel td {
+            padding: 3px 0;
+            font-size: 11px;
+        }
+
+        #info-panel td:first-child {
+            color: #64748b;
+            padding-right: 10px;
+            width: 80px;
+        }
+
+        #drop-zone {
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            text-align: center;
+            color: #64748b;
+            padding: 60px;
+            border: 3px dashed #475569;
+            border-radius: 16px;
+            background: rgba(255, 255, 255, 0.02);
+        }
+
+        #drop-zone.hidden {
+            display: none;
+        }
+
+        #drop-zone .icon {
+            font-size: 48px;
+            margin-bottom: 16px;
+        }
+
+        #drop-zone h2 {
+            color: #94a3b8;
+            margin-bottom: 8px;
+            font-size: 18px;
+        }
+
+        #drop-zone p {
+            color: #64748b;
+            font-size: 13px;
+        }
+
+        .drag-over #drop-zone {
+            border-color: #0ea5e9;
+            background: rgba(14, 165, 233, 0.1);
+        }
+
+        #stats {
+            position: absolute;
+            top: 10px;
+            right: 10px;
+            background: rgba(0, 0, 0, 0.6);
+            color: #fff;
+            padding: 8px 12px;
+            border-radius: 6px;
+            font-size: 11px;
+            z-index: 50;
+        }
+
+        #stats.hidden {
+            display: none;
+        }
+    </style>
+</head>
+<body>
+    <div id="container">
+        <div id="viewer"></div>
+
+        <div id="loading" class="hidden">
+            <div class="spinner"></div>
+            <p id="loading-text">IFC model laden...</p>
+        </div>
+
+        <div id="drop-zone">
+            <div class="icon">&#127959;</div>
+            <h2>IFC 3D Viewer</h2>
+            <p>Sleep een IFC bestand hierheen<br>of gebruik de Open knop</p>
+        </div>
+
+        <div id="toolbar" class="hidden">
+            <button class="tool-btn" id="btn-fit">&#128306; Passend</button>
+            <button class="tool-btn" id="btn-top">&#11014; Boven</button>
+            <button class="tool-btn" id="btn-front">&#9632; Voor</button>
+            <button class="tool-btn" id="btn-right">&#9654; Rechts</button>
+            <button class="tool-btn" id="btn-iso">&#128230; 3D</button>
+            <button class="tool-btn" id="btn-wire">&#128200; Wireframe</button>
+        </div>
+
+        <div id="info-panel" class="hidden">
+            <h4>Model Info</h4>
+            <table id="info-table">
+                <tr><td>Bestand:</td><td id="info-file">-</td></tr>
+                <tr><td>Elementen:</td><td id="info-elements">-</td></tr>
+                <tr><td>Vertices:</td><td id="info-vertices">-</td></tr>
+            </table>
+        </div>
+
+        <div id="stats" class="hidden">
+            <span id="fps">0 FPS</span>
+        </div>
+    </div>
+
+    <script>
+        // Globale variabelen
+        let scene, camera, renderer, controls;
+        let model = null;
+        let ifcApi = null;
+        let wireframeMode = false;
+        let pendingLoad = null;
+        let isInitialized = false;
+
+        // DOM elementen
+        const container = document.getElementById('viewer');
+        const loadingEl = document.getElementById('loading');
+        const loadingText = document.getElementById('loading-text');
+        const dropZone = document.getElementById('drop-zone');
+        const toolbar = document.getElementById('toolbar');
+        const infoPanel = document.getElementById('info-panel');
+        const statsEl = document.getElementById('stats');
+
+        // Initialiseer Three.js
+        async function init() {
+            // Scene
+            scene = new THREE.Scene();
+            scene.background = new THREE.Color(0x1e293b);
+
+            // Camera
+            camera = new THREE.PerspectiveCamera(45, container.clientWidth / container.clientHeight, 0.1, 1000);
+            camera.position.set(20, 20, 20);
+
+            // Renderer
+            renderer = new THREE.WebGLRenderer({ antialias: true });
+            renderer.setSize(container.clientWidth, container.clientHeight);
+            renderer.setPixelRatio(window.devicePixelRatio);
+            renderer.shadowMap.enabled = true;
+            renderer.shadowMap.type = THREE.PCFSoftShadowMap;
+            container.appendChild(renderer.domElement);
+
+            // Controls
+            controls = new THREE.OrbitControls(camera, renderer.domElement);
+            controls.enableDamping = true;
+            controls.dampingFactor = 0.05;
+            controls.screenSpacePanning = true;
+            controls.minDistance = 1;
+            controls.maxDistance = 500;
+            controls.target.set(0, 0, 0);
+
+            // Lighting
+            const ambientLight = new THREE.AmbientLight(0xffffff, 0.6);
+            scene.add(ambientLight);
+
+            const directionalLight = new THREE.DirectionalLight(0xffffff, 0.8);
+            directionalLight.position.set(50, 50, 25);
+            directionalLight.castShadow = true;
+            directionalLight.shadow.mapSize.width = 2048;
+            directionalLight.shadow.mapSize.height = 2048;
+            scene.add(directionalLight);
+
+            const fillLight = new THREE.DirectionalLight(0xffffff, 0.3);
+            fillLight.position.set(-25, 25, -25);
+            scene.add(fillLight);
+
+            // Grid
+            const gridHelper = new THREE.GridHelper(100, 100, 0x475569, 0x334155);
+            scene.add(gridHelper);
+
+            // Axes helper
+            const axesHelper = new THREE.AxesHelper(5);
+            scene.add(axesHelper);
+
+            // Initialiseer web-ifc
+            try {
+                ifcApi = new WebIFC.IfcAPI();
+                await ifcApi.Init();
+                console.log('web-ifc initialized');
+            } catch (error) {
+                console.error('web-ifc init error:', error);
+            }
+
+            // Event listeners
+            setupEventListeners();
+
+            // Start render loop
+            animate();
+
+            // Resize handler
+            window.addEventListener('resize', onWindowResize);
+
+            isInitialized = true;
+            console.log('Viewer initialized');
+
+            // Laad pending model als aanwezig
+            if (pendingLoad) {
+                const { data, filename } = pendingLoad;
+                pendingLoad = null;
+                await loadIFCFromBuffer(data, filename);
+            }
+        }
+
+        function animate() {
+            requestAnimationFrame(animate);
+            controls.update();
+            renderer.render(scene, camera);
+        }
+
+        function onWindowResize() {
+            camera.aspect = container.clientWidth / container.clientHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(container.clientWidth, container.clientHeight);
+        }
+
+        // Laad IFC bestand
+        async function loadIFCFromBuffer(buffer, filename) {
+            if (!ifcApi) {
+                console.error('web-ifc not initialized');
+                return;
+            }
+
+            loadingEl.classList.remove('hidden');
+            loadingText.textContent = 'IFC model laden...';
+            dropZone.classList.add('hidden');
+
+            try {
+                // Verwijder bestaand model
+                if (model) {
+                    scene.remove(model);
+                    model.traverse((child) => {
+                        if (child.geometry) child.geometry.dispose();
+                        if (child.material) {
+                            if (Array.isArray(child.material)) {
+                                child.material.forEach(m => m.dispose());
+                            } else {
+                                child.material.dispose();
+                            }
+                        }
+                    });
+                    model = null;
+                }
+
+                loadingText.textContent = 'IFC parsing...';
+
+                // Open IFC model
+                const modelID = ifcApi.OpenModel(buffer);
+
+                loadingText.textContent = 'Geometrie genereren...';
+
+                // Haal alle geometrie op
+                const geometries = [];
+                let totalVertices = 0;
+                let elementCount = 0;
+
+                // Flatbuffer ophalen en converteren naar meshes
+                ifcApi.StreamAllMeshes(modelID, (mesh) => {
+                    const placedGeometries = mesh.geometries;
+
+                    for (let i = 0; i < placedGeometries.size(); i++) {
+                        const placedGeometry = placedGeometries.get(i);
+                        const geometry = ifcApi.GetGeometry(modelID, placedGeometry.geometryExpressID);
+
+                        const verts = ifcApi.GetVertexArray(geometry.GetVertexData(), geometry.GetVertexDataSize());
+                        const indices = ifcApi.GetIndexArray(geometry.GetIndexData(), geometry.GetIndexDataSize());
+
+                        if (verts.length > 0 && indices.length > 0) {
+                            // Maak Three.js geometrie
+                            const threeGeometry = new THREE.BufferGeometry();
+
+                            // Vertices bevatten: x, y, z, nx, ny, nz (6 floats per vertex)
+                            const positions = new Float32Array(verts.length / 2);
+                            const normals = new Float32Array(verts.length / 2);
+
+                            for (let j = 0; j < verts.length; j += 6) {
+                                const idx = j / 2;
+                                positions[idx] = verts[j];
+                                positions[idx + 1] = verts[j + 1];
+                                positions[idx + 2] = verts[j + 2];
+                                normals[idx] = verts[j + 3];
+                                normals[idx + 1] = verts[j + 4];
+                                normals[idx + 2] = verts[j + 5];
+                            }
+
+                            threeGeometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+                            threeGeometry.setAttribute('normal', new THREE.BufferAttribute(normals, 3));
+                            threeGeometry.setIndex(Array.from(indices));
+
+                            // Kleur uit IFC
+                            const color = new THREE.Color(
+                                placedGeometry.color.x,
+                                placedGeometry.color.y,
+                                placedGeometry.color.z
+                            );
+
+                            const material = new THREE.MeshPhongMaterial({
+                                color: color,
+                                side: THREE.DoubleSide,
+                                flatShading: false,
+                                transparent: placedGeometry.color.w < 1,
+                                opacity: placedGeometry.color.w
+                            });
+
+                            const mesh = new THREE.Mesh(threeGeometry, material);
+
+                            // Pas transformatie matrix toe
+                            const matrix = new THREE.Matrix4();
+                            matrix.fromArray(placedGeometry.flatTransformation);
+                            mesh.applyMatrix4(matrix);
+
+                            geometries.push(mesh);
+                            totalVertices += positions.length / 3;
+                            elementCount++;
+                        }
+
+                        geometry.delete();
+                    }
+                });
+
+                // Sluit IFC model
+                ifcApi.CloseModel(modelID);
+
+                loadingText.textContent = 'Scene bouwen...';
+
+                // Maak group van alle geometrie
+                model = new THREE.Group();
+                geometries.forEach(mesh => model.add(mesh));
+                scene.add(model);
+
+                // Centreer model
+                const box = new THREE.Box3().setFromObject(model);
+                const center = box.getCenter(new THREE.Vector3());
+                const size = box.getSize(new THREE.Vector3());
+
+                model.position.sub(center);
+
+                // Pas camera aan
+                const maxDim = Math.max(size.x, size.y, size.z);
+                const fov = camera.fov * (Math.PI / 180);
+                let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2));
+                cameraZ *= 1.5;
+
+                camera.position.set(cameraZ, cameraZ, cameraZ);
+                controls.target.set(0, 0, 0);
+                controls.update();
+
+                // Update UI
+                toolbar.classList.remove('hidden');
+                loadingEl.classList.add('hidden');
+                infoPanel.classList.remove('hidden');
+
+                document.getElementById('info-file').textContent = filename;
+                document.getElementById('info-elements').textContent = elementCount.toLocaleString();
+                document.getElementById('info-vertices').textContent = totalVertices.toLocaleString();
+
+                console.log('Model loaded:', filename, 'Elements:', elementCount);
+
+                // Notify Qt als beschikbaar
+                if (window.qt && window.qt.onModelLoaded) {
+                    window.qt.onModelLoaded(filename);
+                }
+
+            } catch (error) {
+                console.error('Load error:', error);
+                loadingEl.classList.add('hidden');
+                dropZone.classList.remove('hidden');
+                dropZone.innerHTML = `
+                    <div class="icon">&#9888;</div>
+                    <h2>Laad fout</h2>
+                    <p>${error.message}</p>
+                `;
+            }
+        }
+
+        // Event listeners
+        function setupEventListeners() {
+            // Drag & drop
+            document.body.addEventListener('dragover', (e) => {
+                e.preventDefault();
+                document.body.classList.add('drag-over');
+            });
+
+            document.body.addEventListener('dragleave', () => {
+                document.body.classList.remove('drag-over');
+            });
+
+            document.body.addEventListener('drop', async (e) => {
+                e.preventDefault();
+                document.body.classList.remove('drag-over');
+
+                const file = e.dataTransfer.files[0];
+                if (file && file.name.toLowerCase().endsWith('.ifc')) {
+                    const buffer = await file.arrayBuffer();
+                    await loadIFCFromBuffer(new Uint8Array(buffer), file.name);
+                }
+            });
+
+            // Toolbar buttons
+            document.getElementById('btn-fit').addEventListener('click', () => {
+                if (model) {
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const maxDim = Math.max(size.x, size.y, size.z);
+                    const fov = camera.fov * (Math.PI / 180);
+                    let cameraZ = Math.abs(maxDim / 2 / Math.tan(fov / 2)) * 1.5;
+
+                    camera.position.set(cameraZ, cameraZ, cameraZ);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            });
+
+            document.getElementById('btn-top').addEventListener('click', () => {
+                if (model) {
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const dist = Math.max(size.x, size.z) * 1.5;
+                    camera.position.set(0, dist, 0.001);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            });
+
+            document.getElementById('btn-front').addEventListener('click', () => {
+                if (model) {
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const dist = Math.max(size.x, size.y) * 1.5;
+                    camera.position.set(0, size.y / 4, dist);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            });
+
+            document.getElementById('btn-right').addEventListener('click', () => {
+                if (model) {
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const dist = Math.max(size.y, size.z) * 1.5;
+                    camera.position.set(dist, size.y / 4, 0);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            });
+
+            document.getElementById('btn-iso').addEventListener('click', () => {
+                if (model) {
+                    const box = new THREE.Box3().setFromObject(model);
+                    const size = box.getSize(new THREE.Vector3());
+                    const dist = Math.max(size.x, size.y, size.z) * 1.2;
+                    camera.position.set(dist, dist, dist);
+                    controls.target.set(0, 0, 0);
+                    controls.update();
+                }
+            });
+
+            document.getElementById('btn-wire').addEventListener('click', (e) => {
+                wireframeMode = !wireframeMode;
+                e.target.classList.toggle('active', wireframeMode);
+
+                if (model) {
+                    model.traverse((child) => {
+                        if (child.isMesh && child.material) {
+                            child.material.wireframe = wireframeMode;
+                        }
+                    });
+                }
+            });
+        }
+
+        // API voor Qt integratie
+        window.loadIFCBuffer = async function(base64Data, filename) {
+            try {
+                const binaryString = atob(base64Data);
+                const bytes = new Uint8Array(binaryString.length);
+                for (let i = 0; i < binaryString.length; i++) {
+                    bytes[i] = binaryString.charCodeAt(i);
+                }
+
+                if (!isInitialized) {
+                    console.log('Viewer not ready, queuing load...');
+                    pendingLoad = { data: bytes, filename: filename };
+                    return;
+                }
+
+                await loadIFCFromBuffer(bytes, filename);
+            } catch (error) {
+                console.error('Failed to load buffer:', error);
+            }
+        };
+
+        window.fitView = function() {
+            document.getElementById('btn-fit').click();
+        };
+
+        window.setView = function(type) {
+            const btnMap = {
+                'top': 'btn-top',
+                'front': 'btn-front',
+                'right': 'btn-right',
+                'iso': 'btn-iso'
+            };
+            if (btnMap[type]) {
+                document.getElementById(btnMap[type]).click();
+            }
+        };
+
+        // Start
+        init();
+    </script>
+</body>
+</html>
